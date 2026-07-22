@@ -1,3 +1,5 @@
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -30,27 +32,36 @@ import {
   Target,
   Activity
 } from "lucide-react";
-import { useAnalytics } from "@/hooks/useAnalytics";
+import { Analytics } from "@/services/db/analytics";
 
 const BLOOM_COLORS = {
   "Remembering": "hsl(var(--primary))",
+  "remembering": "hsl(var(--primary))",
   "Understanding": "hsl(var(--secondary))", 
+  "understanding": "hsl(var(--secondary))", 
   "Applying": "hsl(var(--accent))",
+  "applying": "hsl(var(--accent))",
   "Analyzing": "hsl(var(--primary-glow))",
+  "analyzing": "hsl(var(--primary-glow))",
   "Evaluating": "hsl(var(--muted))",
+  "evaluating": "hsl(var(--muted))",
   "Creating": "hsl(var(--destructive))",
+  "creating": "hsl(var(--destructive))",
   "Unknown": "hsl(var(--muted-foreground))"
 };
 
 const CREATOR_COLORS = {
   "AI Generated": "hsl(var(--primary))",
-  "Teacher Created": "hsl(var(--secondary))"
+  "Admin Created": "hsl(var(--secondary))"
 };
 
 const DIFFICULTY_COLORS = {
   "Easy": "hsl(var(--secondary))",
+  "easy": "hsl(var(--secondary))",
   "Average": "hsl(var(--primary))",
-  "Hard": "hsl(var(--destructive))",
+  "average": "hsl(var(--primary))",
+  "Difficult": "hsl(var(--destructive))",
+  "difficult": "hsl(var(--destructive))",
   "Unknown": "hsl(var(--muted-foreground))"
 };
 
@@ -65,7 +76,133 @@ const USAGE_COLORS = {
 };
 
 export const AnalyticsCharts = () => {
-  const analytics = useAnalytics();
+  const [analytics, setAnalytics] = useState<{
+    bloomDistribution: Array<{name: string; value: number; percentage: number}>;
+    creatorStats: Array<{name: string; value: number}>;
+    timeSeriesData: Array<{date: string; count: number}>;
+    difficultySpread: Array<{name: string; value: number; percentage: number}>;
+    usageStats: Array<{name: string; value: number; percentage: number}>;
+    approvalStats: Array<{name: string; value: number}>;
+    topicAnalysis: Array<{topic: string; questionCount: number; approvalRate: number}>;
+    totalQuestions: number;
+    aiQuestions: number;
+    teacherQuestions: number;
+    approvedQuestions: number;
+    pendingApproval: number;
+    loading: boolean;
+  }>({
+    bloomDistribution: [],
+    creatorStats: [],
+    timeSeriesData: [],
+    difficultySpread: [],
+    usageStats: [],
+    approvalStats: [],
+    topicAnalysis: [],
+    totalQuestions: 0,
+    aiQuestions: 0,
+    teacherQuestions: 0,
+    approvedQuestions: 0,
+    pendingApproval: 0,
+    loading: true,
+  });
+
+  useEffect(() => {
+    loadAnalytics();
+    
+    // Set up real-time subscription
+    const channel = supabase
+      .channel('analytics-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'questions'
+        },
+        () => {
+          loadAnalytics();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'activity_log'
+        },
+        () => {
+          loadAnalytics();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const loadAnalytics = async () => {
+    try {
+      const [
+        bloomData,
+        difficultyData,
+        creatorData,
+        usageData,
+        approvalData,
+        topicData
+      ] = await Promise.all([
+        Analytics.bloomDistribution(),
+        Analytics.difficultySpread(),
+        Analytics.creatorStats(),
+        Analytics.usageOverTime(),
+        Analytics.approvalStats(),
+        Analytics.topicAnalysis()
+      ]);
+
+      const totalQuestions = bloomData.reduce((sum, item) => sum + item.value, 0);
+      const aiQuestions = creatorData.find(item => item.name === 'AI Generated')?.value || 0;
+      const teacherQuestions = creatorData.find(item => item.name === 'Teacher Created')?.value || creatorData.find(item => item.name === 'Admin Created')?.value || 0;
+      
+      // Rename "Teacher Created" to "Admin Created" in creator stats
+      const renamedCreatorData = creatorData.map(item => 
+        item.name === 'Teacher Created' ? { ...item, name: 'Admin Created' } : item
+      );
+      const approvedQuestions = approvalData.find(item => item.name === 'Approved')?.value || 0;
+      const pendingApproval = approvalData.find(item => item.name === 'Pending Review')?.value || 0;
+
+      // Transform topic analysis data
+      const topicAnalysis = topicData.slice(0, 10).map((item) => ({
+        topic: item.topic,
+        questionCount: item.count,
+        approvalRate: item.count > 0 ? Math.round((item.approved / item.count) * 100) : 0
+      }));
+
+      // Calculate usage stats (mock for now until we have real usage tracking)
+      const usageStats = [
+        { name: 'Used in Tests', value: Math.floor(totalQuestions * 0.6), percentage: 60 },
+        { name: 'Unused', value: Math.floor(totalQuestions * 0.4), percentage: 40 }
+      ];
+
+      setAnalytics({
+        bloomDistribution: bloomData,
+        creatorStats: renamedCreatorData,
+        timeSeriesData: usageData,
+        difficultySpread: difficultyData,
+        usageStats,
+        approvalStats: approvalData,
+        topicAnalysis,
+        totalQuestions,
+        aiQuestions,
+        teacherQuestions,
+        approvedQuestions,
+        pendingApproval,
+        loading: false,
+      });
+    } catch (error) {
+      console.error('Error loading analytics:', error);
+      setAnalytics(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   if (analytics.loading) {
     return (
@@ -135,7 +272,7 @@ export const AnalyticsCharts = () => {
 
         <Card className="bg-gradient-card border-0 shadow-card">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Teacher Created</CardTitle>
+            <CardTitle className="text-sm font-medium">Admin Created</CardTitle>
             <TrendingUp className="h-4 w-4 text-secondary" />
           </CardHeader>
           <CardContent>
@@ -144,19 +281,6 @@ export const AnalyticsCharts = () => {
               {analytics.totalQuestions > 0 
                 ? Math.round((analytics.teacherQuestions / analytics.totalQuestions) * 100)
                 : 0}% of total
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-card border-0 shadow-card">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Approved Questions</CardTitle>
-            <CheckCircle className="h-4 w-4 text-secondary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{analytics.approvedQuestions}</div>
-            <p className="text-xs text-muted-foreground">
-              {analytics.pendingApproval} pending review
             </p>
           </CardContent>
         </Card>
@@ -188,6 +312,7 @@ export const AnalyticsCharts = () => {
                     outerRadius={80}
                     innerRadius={40}
                     paddingAngle={2}
+                    label={({ name, percentage }) => `${name} ${percentage}%`}
                   >
                     {analytics.bloomDistribution.map((entry, index) => (
                       <Cell 
@@ -251,6 +376,7 @@ export const AnalyticsCharts = () => {
                     dataKey="value" 
                     radius={[4, 4, 0, 0]}
                     fill="hsl(var(--primary))"
+                    label={{ position: 'top', fontSize: 12, fill: 'hsl(var(--foreground))' }}
                   />
                   <ChartTooltip
                     content={({ active, payload, label }) => {
@@ -301,6 +427,7 @@ export const AnalyticsCharts = () => {
                     outerRadius={80}
                     innerRadius={40}
                     paddingAngle={2}
+                    label={({ name, percentage }) => `${name} ${percentage}%`}
                   >
                     {analytics.difficultySpread.map((entry, index) => (
                       <Cell 
@@ -341,83 +468,32 @@ export const AnalyticsCharts = () => {
           </CardContent>
         </Card>
 
-        {/* Approval Status */}
-        <Card className="bg-gradient-card border-0 shadow-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5" />
-              Approval Status
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {analytics.approvalStats.length > 0 ? (
-              <ChartContainer config={chartConfig} className="max-h-[300px]">
-                <BarChart data={analytics.approvalStats}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted))" />
-                  <XAxis 
-                    dataKey="name" 
-                    stroke="hsl(var(--muted-foreground))"
-                    fontSize={12}
-                  />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <Bar 
-                    dataKey="value" 
-                    radius={[4, 4, 0, 0]}
-                    fill="hsl(var(--secondary))"
-                  />
-                  <ChartTooltip
-                    content={({ active, payload, label }) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className="rounded-lg border bg-background p-2 shadow-md">
-                            <p className="font-medium">{label}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {payload[0].value} questions
-                            </p>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                </BarChart>
-              </ChartContainer>
-            ) : (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                No data available
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Secondary Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Topic Analysis */}
+        {/* System Activity Over Time */}
         <Card className="bg-gradient-card border-0 shadow-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5" />
-              Topic Analysis (Top 10)
+              Usage Over Time
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {analytics.topicAnalysis.length > 0 ? (
+            {analytics.timeSeriesData.length > 0 ? (
               <ChartContainer config={chartConfig} className="max-h-[300px]">
-                <BarChart data={analytics.topicAnalysis} layout="horizontal">
+                <LineChart data={analytics.timeSeriesData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted))" />
-                  <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis 
-                    dataKey="topic" 
-                    type="category" 
+                  <XAxis 
+                    dataKey="date" 
                     stroke="hsl(var(--muted-foreground))"
-                    fontSize={10}
-                    width={80}
+                    fontSize={12}
                   />
-                  <Bar 
-                    dataKey="questionCount" 
-                    radius={[0, 4, 4, 0]}
-                    fill="hsl(var(--accent))"
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <Line 
+                    type="monotone" 
+                    dataKey="count" 
+                    stroke="hsl(var(--primary))"
+                    strokeWidth={2}
+                    dot={{ r: 4 }}
+                    activeDot={{ r: 6 }}
                   />
                   <ChartTooltip
                     content={({ active, payload, label }) => {
@@ -426,7 +502,7 @@ export const AnalyticsCharts = () => {
                           <div className="rounded-lg border bg-background p-2 shadow-md">
                             <p className="font-medium">{label}</p>
                             <p className="text-sm text-muted-foreground">
-                              {payload[0].value} questions
+                              {payload[0].value} activities
                             </p>
                           </div>
                         );
@@ -434,71 +510,7 @@ export const AnalyticsCharts = () => {
                       return null;
                     }}
                   />
-                </BarChart>
-              </ChartContainer>
-            ) : (
-              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-                No data available
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Usage Statistics */}
-        <Card className="bg-gradient-card border-0 shadow-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Question Usage
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {analytics.usageStats.length > 0 ? (
-              <ChartContainer
-                config={chartConfig}
-                className="mx-auto aspect-square max-h-[300px]"
-              >
-                <PieChart>
-                  <Pie
-                    data={analytics.usageStats}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    innerRadius={40}
-                    paddingAngle={2}
-                  >
-                    {analytics.usageStats.map((entry, index) => (
-                      <Cell 
-                        key={`cell-${index}`} 
-                        fill={USAGE_COLORS[entry.name as keyof typeof USAGE_COLORS] || "hsl(var(--muted))"}
-                      />
-                    ))}
-                  </Pie>
-                  <ChartTooltip
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length > 0) {
-                        const data = payload[0].payload;
-                        return (
-                          <div className="rounded-lg border bg-background p-2 shadow-md">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div className="flex flex-col">
-                                <span className="text-[0.70rem] uppercase text-muted-foreground">
-                                  {data.name}
-                                </span>
-                                <span className="font-bold text-muted-foreground">
-                                  {data.value} questions ({data.percentage}%)
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                </PieChart>
+                </LineChart>
               </ChartContainer>
             ) : (
               <div className="flex items-center justify-center h-[300px] text-muted-foreground">
@@ -509,32 +521,33 @@ export const AnalyticsCharts = () => {
         </Card>
       </div>
 
-      {/* Time Series Chart */}
-      {analytics.timeSeriesData.length > 0 && (
+      {/* Topic Analysis */}
+      {analytics.topicAnalysis.length > 0 && (
         <Card className="bg-gradient-card border-0 shadow-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5" />
-              Question Creation Over Time (Last 14 Days)
+              <Target className="h-5 w-5" />
+              Top Topics by Question Count
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={chartConfig} className="max-h-[300px]">
-              <LineChart data={analytics.timeSeriesData}>
+            <ChartContainer config={chartConfig} className="max-h-[400px]">
+              <BarChart data={analytics.topicAnalysis} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted))" />
-                <XAxis 
-                  dataKey="date" 
-                  stroke="hsl(var(--muted-foreground))"
-                  fontSize={12}
+                <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                <YAxis 
+                  type="category" 
+                  dataKey="topic" 
+                  stroke="hsl(var(--muted-foreground))" 
+                  fontSize={11}
+                  width={150}
+                  tickLine={false}
                 />
-                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                <Line 
-                  type="monotone" 
-                  dataKey="count" 
-                  stroke="hsl(var(--primary))" 
-                  strokeWidth={2}
-                  dot={{ fill: "hsl(var(--primary))", strokeWidth: 2, r: 4 }}
-                  activeDot={{ r: 6, stroke: "hsl(var(--primary))", strokeWidth: 2 }}
+                <Bar 
+                  dataKey="questionCount" 
+                  radius={[0, 4, 4, 0]}
+                  fill="hsl(var(--primary))"
+                  label={{ position: 'right', fontSize: 11, fill: 'hsl(var(--foreground))' }}
                 />
                 <ChartTooltip
                   content={({ active, payload, label }) => {
@@ -543,7 +556,7 @@ export const AnalyticsCharts = () => {
                         <div className="rounded-lg border bg-background p-2 shadow-md">
                           <p className="font-medium">{label}</p>
                           <p className="text-sm text-muted-foreground">
-                            {payload[0].value} questions created
+                            {payload[0].value} questions ({payload[0].payload?.approvalRate}% approved)
                           </p>
                         </div>
                       );
@@ -551,7 +564,7 @@ export const AnalyticsCharts = () => {
                     return null;
                   }}
                 />
-              </LineChart>
+              </BarChart>
             </ChartContainer>
           </CardContent>
         </Card>
@@ -559,3 +572,5 @@ export const AnalyticsCharts = () => {
     </div>
   );
 };
+
+export default AnalyticsCharts;

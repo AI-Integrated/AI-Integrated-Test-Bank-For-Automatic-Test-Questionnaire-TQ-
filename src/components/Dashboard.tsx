@@ -1,7 +1,9 @@
+import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { AnalyticsCharts } from "@/components/AnalyticsCharts";
+import AnalyticsCharts from "@/components/AnalyticsCharts";
+import { useRealtime } from "@/hooks/useRealtime";
 import { 
   BookOpen, 
   Brain, 
@@ -12,7 +14,8 @@ import {
   Clock,
   CheckCircle,
   BarChart3,
-  Plus
+  Plus,
+  GraduationCap
 } from "lucide-react";
 
 interface DashboardProps {
@@ -39,6 +42,26 @@ export const Dashboard = ({
   onNavigate 
 }: DashboardProps) => {
   
+  const [realtimeActivity, setRealtimeActivity] = useState<any[]>([]);
+  const [systemStatus, setSystemStatus] = useState<'online' | 'offline'>('online');
+
+  // Real-time activity monitoring
+  useRealtime('dashboard-activity', {
+    table: 'activity_log',
+    onInsert: (newActivity) => {
+      setRealtimeActivity(prev => [newActivity, ...prev.slice(0, 4)]);
+    }
+  });
+
+  // Monitor system-wide changes
+  useRealtime('dashboard-questions', {
+    table: 'questions',
+    onChange: () => {
+      // Update stats in real-time when questions change
+      setSystemStatus('online');
+    }
+  });
+
   const quickActions = [
     {
       title: "Create TOS",
@@ -77,6 +100,23 @@ export const Dashboard = ({
       icon: BarChart3,
       action: "rubric-manager",
       color: "text-green-600"
+    },
+    {
+      title: "Grade Essays",
+      description: "Grade essay responses with rubrics",
+      icon: GraduationCap,
+      action: "essay-grading",
+      color: "text-purple-600"
+    }
+  ];
+
+  const collaborativeActions = [
+    {
+      title: "Collaborative Questions",
+      description: "Work together on question bank",
+      icon: Users,
+      action: "collaborative-questions",
+      color: "text-blue-600"
     }
   ];
 
@@ -198,6 +238,30 @@ export const Dashboard = ({
           {teacherActions.map((action, index) => (
             <Card 
               key={`teacher-${index}`}
+              className="bg-gradient-card border-0 shadow-card hover:shadow-elegant transition-smooth cursor-pointer group"
+              onClick={() => onNavigate?.(action.action)}
+            >
+              <CardHeader className="text-center space-y-4">
+                <div className="mx-auto w-12 h-12 rounded-lg bg-muted/50 group-hover:bg-muted flex items-center justify-center transition-smooth">
+                  <action.icon className={`h-6 w-6 ${action.color}`} />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">{action.title}</CardTitle>
+                  <CardDescription>{action.description}</CardDescription>
+                </div>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* Collaborative Tools */}
+      <div className="space-y-4">
+        <h2 className="text-2xl font-semibold">Collaborative Tools</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {collaborativeActions.map((action, index) => (
+            <Card 
+              key={`collaborative-${index}`}
               className="bg-gradient-card border-0 shadow-card hover:shadow-elegant transition-smooth cursor-pointer group"
               onClick={() => onNavigate?.(action.action)}
             >
